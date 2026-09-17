@@ -92,15 +92,33 @@ function sortFullMarket(rows,mode){
     return String(a['代號']??'').localeCompare(String(b['代號']??''));
   });
 }
+// 2026-09-18 使用者要求：可展開的成員明細一律「金色（強勢／買超）在前，非金色在後」，
+// 兩群各自依當日漲跌% 由高到低。只篩金色的面板因此自然就是純漲跌% 排序。
+// 漲跌% 缺值（09-16 以前的舊快照沒有這欄）排在該群最後，並退回各區塊原本的排序欄位，
+// 歷史日期不會退化成代號順序。
+// 注意 Number(null)===0：缺值若直接丟進 Number() 會被當成「平盤 0%」排在中間，
+// 所以 null／undefined／空字串一律先轉成 NaN，再由 memberCompareDesc 排到該群最後。
+function memberNumber(value){
+  return (value===null||value===undefined||value==='')?NaN:Number(value);
+}
+function memberCompareDesc(a,b){
+  const fa=Number.isFinite(a),fb=Number.isFinite(b);
+  if(fa&&fb) return b-a;
+  if(fa!==fb) return fa?-1:1;
+  return 0;
+}
+function orderMembers(rows,goldField,fallbackField){
+  return rows.slice().sort((a,b)=>{
+    const ga=a[goldField]===true,gb=b[goldField]===true;
+    if(ga!==gb) return Number(gb)-Number(ga);
+    return memberCompareDesc(memberNumber(a['漲跌%']),memberNumber(b['漲跌%']))||
+      memberCompareDesc(memberNumber(a[fallbackField]),memberNumber(b[fallbackField]))||
+      String(a['代號']??'').localeCompare(String(b['代號']??''));
+  });
+}
 function laneMemberTable(rows,industry){
   if(!Array.isArray(rows)) return '<div class="empty">'+esc(industry)+'：無成員資料</div>';
-  const strong=rows.filter(r=>r['符合觀察']===true);
-  const ordered=rows.slice().sort((a,b)=>{
-    if(Boolean(a['符合觀察'])!==Boolean(b['符合觀察'])) return Boolean(b['符合觀察'])-Boolean(a['符合觀察']);
-    const ae=Number(a['相對大盤20日%']);const be=Number(b['相對大盤20日%']);
-    if(Number.isFinite(ae)&&Number.isFinite(be)&&be!==ae)return be-ae;
-    return String(a['代號']??'').localeCompare(String(b['代號']??''));
-  });
+  const ordered=orderMembers(rows,'符合觀察','相對大盤20日%');
   return '<div class="member-legend">金色文字＝強勢成員（符合觀察）</div><div data-member-panel="all">'+table(ordered,LANE_MEMBER_COLUMNS,'market_lanes_members')+'</div>'+
     '<div data-member-panel="strong" hidden>'+table(ordered.filter(r=>r['符合觀察']===true),LANE_MEMBER_COLUMNS,'market_lanes_members')+'</div>';
 }
@@ -133,7 +151,8 @@ function limitedMemberTable(rows,columns,sectionKey){
 }
 function moneyFlowMemberTable(rows,group,mode,reportedCount){
   if(!Array.isArray(rows)) return '<div class="empty">明細未留存</div>';
-  const displayed=mode==='positive'?rows.filter(r=>r['買超']===true):rows;
+  const ordered=orderMembers(rows,'買超','五日買超');
+  const displayed=mode==='positive'?ordered.filter(r=>r['買超']===true):ordered;
   const label=mode==='positive'?'買超成員':'全部有效成員';
   const countLabel=mode==='positive'?'買超檔數':'有效檔數';
   return '<div data-member-panel="'+esc(mode)+'"><strong>'+esc(group)+' · '+label+
